@@ -13,6 +13,12 @@ for sdk_target in MMSPlugin.sdk_targets:
   cxx.cxxflags += ['-Wno-invalid-offsetof']
   binary = MMSPlugin.HL2Library(builder, cxx, MMSPlugin.plugin_name, sdk)
 
+  compat_header = os.path.join(builder.sourcePath, 'include', 'hl2sdk_compat.h')
+  if binary.compiler.like('gcc'):
+    binary.compiler.cxxflags += ['-include', compat_header]
+  elif binary.compiler.like('msvc'):
+    binary.compiler.cxxflags += ['/FI{}'.format(compat_header)]
+
   binary.compiler.cxxincludes += [
     os.path.join(builder.currentSourcePath, 'funchook', 'include'),
     os.path.join(builder.sourcePath, 'include'),

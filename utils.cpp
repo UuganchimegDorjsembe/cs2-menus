@@ -2218,7 +2218,17 @@ void PlayersApi::TakeDamage(int iSlot, CTakeDamageInfo* pInfo, bool bHook)
 	if(!pController) return;
 	CCSPlayerPawn* pPawn = pController->GetPlayerPawn();
 	if(!pPawn) return;
-	CCSPlayer_DamageReactServices* pDamageServices = pPawn->m_pDamageReactServices();
+	static const auto damageServicesKey = schema::GetOffset(
+		"CCSPlayerPawn",
+		hash_32_fnv1a_const("CCSPlayerPawn"),
+		"m_pDamageReactServices",
+		hash_32_fnv1a_const("m_pDamageReactServices")
+	);
+	CCSPlayer_DamageReactServices* pDamageServices =
+		*reinterpret_cast<CCSPlayer_DamageReactServices**>(
+			reinterpret_cast<uintptr_t>(pPawn) + damageServicesKey.offset
+		);
+	if(!pDamageServices) return;
 	if(!bHook)
 	{
 		UTIL_TakeDamage(pDamageServices, pInfo);
