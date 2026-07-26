@@ -2351,7 +2351,7 @@ const char* Menus::GetLicense()
 
 const char* Menus::GetVersion()
 {
-	return "1.8.7";
+	return "1.8.8";
 }
 
 const char* Menus::GetDate()
@@ -2366,12 +2366,12 @@ const char *Menus::GetLogTag()
 
 const char* Menus::GetAuthor()
 {
-	return "Pisex";
+	return "marigold, Snaximusss+";
 }
 
 const char* Menus::GetDescription()
 {
-	return "Game Utils";
+	return "Snaximusss+ NEED GF";
 }
 
 const char* Menus::GetName()
@@ -2381,5 +2381,5 @@ const char* Menus::GetName()
 
 const char* Menus::GetURL()
 {
-	return "https://discord.gg/g798xERK5Y";
+	return "https://discord.gg/firstmn";
 }
