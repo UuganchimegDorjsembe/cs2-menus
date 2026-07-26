@@ -21,9 +21,14 @@ jobs:
       image: ghcr.io/pisex/ubuntu20:latest
 
     env:
+      CC: gcc
+      CXX: g++
       HL2SDK_ROOT: "${{ github.workspace }}/external"
       MMS_PATH: "${{ github.workspace }}/external/metamod-source"
-      MANIFEST_PATH: "${{ github.workspace }}/external/metamod-source/hl2sdk-manifests"
+      AMBUILD_COMMIT: d89ec91a7ac2607da07b50bb62346f9a10e9a998
+      METAMOD_COMMIT: 2667e8e5947237c4cb7ea45cec3913ad6a44757c
+      HL2SDK_COMMIT: 487ba809e2d9f7054593b5b0221229af65ca9fc6
+      SCHEMAENTITY_COMMIT: e7965b3c83ec684d44584ee6457c5482ee5d9db1
 
     steps:
       - name: Generate build number
@@ -34,18 +39,19 @@ jobs:
           token: ${{secrets.github_token}}
 
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up dependencies
         run: |
           export DEBIAN_FRONTEND=noninteractive
           apt-get update -qy
-          apt-get install -y git clang-10 clang++-10 binutils python3 python3-pip zip
+          apt-get install -y git build-essential binutils python3 python3-pip zip
 
           python3 -m pip install --upgrade pip importlib-metadata
           python3 -m pip install setuptools==45.2.0
 
           git clone https://github.com/alliedmodders/ambuild.git ambuild
+          git -C ambuild checkout "$AMBUILD_COMMIT"
           cd ambuild
           pip3 install .
           cd ..
@@ -54,12 +60,16 @@ jobs:
           cd external
           git clone --recursive --branch master --single-branch \
             https://github.com/alliedmodders/metamod-source.git
+          git -C metamod-source checkout "$METAMOD_COMMIT"
+          git -C metamod-source submodule update --init --recursive
           git clone --recursive --branch cs2 --single-branch \
             https://github.com/alliedmodders/hl2sdk.git hl2sdk-cs2
-            
+          git -C hl2sdk-cs2 checkout "$HL2SDK_COMMIT"
+
           cd ../..
 
           git clone https://github.com/pisex/SchemaEntity.git
+          git -C SchemaEntity checkout "$SCHEMAENTITY_COMMIT"
           
       - name: Configure and build plugin
         run: |
