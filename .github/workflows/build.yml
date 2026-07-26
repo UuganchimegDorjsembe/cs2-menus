@@ -7,10 +7,6 @@ on:
   pull_request:
     branches:
       - main
-  release:
-    types:
-      - created
-
 jobs:
   build:
     if: "!contains(github.event.head_commit.message, '[skip ci]')"
@@ -31,15 +27,8 @@ jobs:
       SCHEMAENTITY_COMMIT: e7965b3c83ec684d44584ee6457c5482ee5d9db1
 
     steps:
-      - name: Generate build number
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-        id: buildnumber
-        uses: onyxmueller/build-tag-number@v1
-        with:
-          token: ${{secrets.github_token}}
-
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up dependencies
         run: |
@@ -85,7 +74,12 @@ jobs:
           mv "${{ github.event.repository.name }}.zip" "${GITHUB_WORKSPACE}/"
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ github.event.head_commit.message }}
+          tag_name: build-${{ github.run_number }}
+          name: Build ${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
           files: ${{ github.workspace }}/${{ github.event.repository.name }}.zip
