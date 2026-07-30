@@ -1384,8 +1384,7 @@ void MenusApi::DisplayPlayerMenu(Menu& hMenu, int iSlot, bool bClose = true, boo
 				|| !m_Players[iSlot] || !m_Players[iSlot]->IsInGame())
 				return -1.0f;
 			if(!g_bServerSimulating || !g_pGameRules
-				|| g_pGameRules->m_bGameRestart()
-				|| g_pGameRules->m_bTeamIntroPeriod())
+				|| g_pGameRules->m_bGameRestart())
 				return 0.10f;
 
 			MenuPlayer& hMenuPlayer = g_MenuPlayer[iSlot];
@@ -1744,8 +1743,7 @@ void UtilsApi::PrintToCenterHtml(int iSlot, int iDuration, const char *msg, ...)
 
 	if(iSlot < 0 || iSlot >= 64 || !gameeventmanager || !g_pEntitySystem
 		|| !g_bServerSimulating || !g_pGameRules
-		|| g_pGameRules->m_bGameRestart()
-		|| g_pGameRules->m_bTeamIntroPeriod()) return;
+		|| g_pGameRules->m_bGameRestart()) return;
 	CCSPlayerController* pPlayerController = CCSPlayerController::FromSlot(iSlot);
 	if (!pPlayerController || pPlayerController->m_steamID() <= 0
 		|| !m_Players[iSlot] || !m_Players[iSlot]->IsInGame()) return;
@@ -1795,8 +1793,7 @@ void UtilsApi::PrintToCenterHtmlAll(int iDuration, const char *msg, ...)
 
 	int iEnd = std::time(0) + iDuration;
 	if(!gameeventmanager || !g_pEntitySystem || !g_bServerSimulating || !g_pGameRules
-		|| g_pGameRules->m_bGameRestart()
-		|| g_pGameRules->m_bTeamIntroPeriod()) return;
+		|| g_pGameRules->m_bGameRestart()) return;
 	IGameEvent* pEvent = gameeventmanager->CreateEvent("show_survival_respawn_status");
 	if(!pEvent) return;
 	pEvent->SetString("loc_token", buf);
