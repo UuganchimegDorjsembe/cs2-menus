@@ -34,6 +34,8 @@
 #include <chrono>
 #include <array>
 #include <thread>
+#include <set>
+#include <utility>
 
 class CPhysicsQuery;
 
@@ -87,6 +89,7 @@ public:
 };
 
 std::map<int, std::map<std::string, CommandCallback>> ConsoleCommands;
+std::set<std::string> RegisteredConsoleCommands;
 std::map<int, std::map<std::string, CommandCallback>> ChatCommands;
 
 class Menus final : public ISmmPlugin, public IMetamodListener
@@ -308,7 +311,7 @@ public:
 	void RegCommand(SourceMM::PluginId id, const std::vector<std::string> &console, const std::vector<std::string> &chat, const CommandCallback &callback) override {
 		for (const auto &element : console) {
 			ConsoleCommands[id][element] = callback;
-			if (element.find("mm_") == std::string::npos) {
+			if (element.find("mm_") == std::string::npos || !RegisteredConsoleCommands.insert(element).second) {
 				continue;
 			}
 			new ConCommand(
@@ -380,11 +383,13 @@ public:
 	}
 	
 	void NextFrame() {
-		while (!m_nextFrame.empty())
-		{
-			m_nextFrame.front()();
-			m_nextFrame.pop_front();
-		}
+		// Run a stable snapshot. Callbacks queued by callbacks belong to the next
+		// frame; executing them immediately can recurse forever and can invalidate
+		// engine objects that another callback in this batch still expects.
+		auto callbacks = std::move(m_nextFrame);
+		m_nextFrame.clear();
+		for(auto& callback : callbacks)
+			if(callback) callback();
 	}
 
 	void HookOnTakeDamage(SourceMM::PluginId id, OnTakeDamageCallback callback) override {
@@ -464,6 +469,12 @@ public:
 		m_bAuthenticated = false;
 		m_bConnected = false;
 		m_bInGame = false;
+		m_UnauthenticatedSteamID = nullptr;
+		m_SteamID = nullptr;
+	}
+	~Player() {
+		delete m_UnauthenticatedSteamID;
+		m_UnauthenticatedSteamID = nullptr;
 		m_SteamID = nullptr;
 	}
 	bool IsFakeClient() { return m_bFakeClient; }
