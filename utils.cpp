@@ -8,6 +8,7 @@
 #include <sstream>
 #include <chrono>
 #include <fstream>
+#include <cstdarg>
 
 Menus g_Menus;
 PLUGIN_EXPOSE(Menus, g_Menus);
@@ -85,6 +86,100 @@ std::map<std::string, std::string> g_mapSounds;
 std::vector<std::string> g_vCommandEater;
 
 int g_iOnTakeDamageAliveId = -1;
+
+namespace
+{
+	constexpr auto kCrashTraceDuration = std::chrono::seconds(15);
+	constexpr long kCrashTraceMaxBytes = 16 * 1024 * 1024;
+	bool g_bCrashTraceArmed = false;
+	uint64 g_iCrashTraceFrame = 0;
+	uint64 g_iCrashTraceSequence = 0;
+	std::chrono::steady_clock::time_point g_CrashTraceDeadline;
+
+	void CrashTracePath(char* path, size_t length, const char* filename)
+	{
+		g_SMAPI->PathFormat(path, length, "%s/addons/logs/%s", g_SMAPI->GetBaseDir(), filename);
+	}
+
+	void RotateCrashTraceLog()
+	{
+		char path[512];
+		CrashTracePath(path, sizeof(path), "utils_crash_trace.log");
+		FILE* file = fopen(path, "r");
+		if (!file)
+			return;
+		fseek(file, 0, SEEK_END);
+		const long size = ftell(file);
+		fclose(file);
+		if (size <= kCrashTraceMaxBytes)
+			return;
+
+		char previousPath[512];
+		CrashTracePath(previousPath, sizeof(previousPath), "utils_crash_trace.previous.log");
+		std::remove(previousPath);
+		std::rename(path, previousPath);
+	}
+
+	void CrashTraceLog(const char* format, ...)
+	{
+		if (!g_SMAPI)
+			return;
+
+		char message[1024];
+		va_list args;
+		va_start(args, format);
+		V_vsnprintf(message, sizeof(message), format, args);
+		va_end(args);
+
+		char path[512];
+		CrashTracePath(path, sizeof(path), "utils_crash_trace.log");
+		FILE* file = fopen(path, "a");
+		if (!file)
+			return;
+
+		const auto now = std::chrono::system_clock::now();
+		const auto nowTime = std::chrono::system_clock::to_time_t(now);
+		const auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(
+			now.time_since_epoch()).count() % 1000;
+		std::tm localTime{};
+#if defined(_WIN32)
+		localtime_s(&localTime, &nowTime);
+#else
+		localtime_r(&nowTime, &localTime);
+#endif
+		char timestamp[32];
+		std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", &localTime);
+		fprintf(file, "%s.%03lld seq=%llu %s\n", timestamp,
+			static_cast<long long>(millis),
+			static_cast<unsigned long long>(++g_iCrashTraceSequence), message);
+		fflush(file);
+		fclose(file);
+	}
+
+	void ArmCrashTrace(const char* label)
+	{
+		RotateCrashTraceLog();
+		g_bCrashTraceArmed = true;
+		g_iCrashTraceFrame = 0;
+		g_CrashTraceDeadline = std::chrono::steady_clock::now() + kCrashTraceDuration;
+		CrashTraceLog("trace=armed duration_seconds=15 label=%s map_generation=%llu globals=%p gamerules=%p entity_system=%p",
+			(label && label[0]) ? label : "manual",
+			static_cast<unsigned long long>(g_iMapGeneration),
+			static_cast<void*>(gpGlobals), static_cast<void*>(g_pGameRules),
+			static_cast<void*>(g_pEntitySystem));
+	}
+
+	uint64 CrashTracePlayerMask()
+	{
+		uint64 mask = 0;
+		for (int slot = 0; slot < 64; ++slot)
+		{
+			if (m_Players[slot])
+				mask |= (uint64{1} << slot);
+		}
+		return mask;
+	}
+}
 
 SH_DECL_HOOK0_void(IServerGameDLL, GameServerSteamAPIActivated, SH_NOATTRIB, 0);
 SH_DECL_HOOK3_void(IServerGameDLL, GameFrame, SH_NOATTRIB, 0, bool, bool, bool);
@@ -367,6 +462,7 @@ bool Menus::Load(PluginId id, ISmmAPI* ismm, char* error, size_t maxlen, bool la
 	GET_V_IFACE_CURRENT(GetEngineFactory, g_pGameResourceServiceServer, IGameResourceService, GAMERESOURCESERVICESERVER_INTERFACE_VERSION);
 
 	SH_ADD_HOOK_MEMFUNC(ICvar, DispatchConCommand, g_pCVar, this, &Menus::OnDispatchConCommand, false);
+	SH_ADD_HOOK(IServerGameDLL, GameFrame, g_pSource2Server, SH_MEMBER(this, &Menus::GameFramePre), false);
 	SH_ADD_HOOK(IServerGameDLL, GameFrame, g_pSource2Server, SH_MEMBER(this, &Menus::GameFrame), true);
 	SH_ADD_HOOK(IServerGameClients, ClientCommand, g_pSource2GameClients, SH_MEMBER(this, &Menus::ClientCommand), false);
 	SH_ADD_HOOK(INetworkServerService, StartupServer, g_pNetworkServerService, SH_MEMBER(this, &Menus::StartupServer), true);
@@ -393,6 +489,12 @@ bool Menus::Load(PluginId id, ISmmAPI* ismm, char* error, size_t maxlen, bool la
 
 	g_pUtilsApi = new UtilsApi();
 	g_pUtilsCore = g_pUtilsApi;
+	g_pUtilsApi->RegCommand(g_PLID, {"mm_utils_crashtrace"}, {}, [](int slot, const char* content) {
+		if (slot != -1)
+			return false;
+		ArmCrashTrace(content);
+		return true;
+	});
 
 	g_pPlayersApi = new PlayersApi();
 	g_pPlayersCore = g_pPlayersApi;
@@ -755,7 +857,9 @@ bool Menus::Hook_OnTakeDamage_Alive(CTakeDamageInfoContainer *pInfoContainer)
 
 bool Menus::Unload(char *error, size_t maxlen)
 {
+	CrashTraceLog("plugin=unload map_generation=%llu", static_cast<unsigned long long>(g_iMapGeneration));
 	SH_REMOVE_HOOK_MEMFUNC(ICvar, DispatchConCommand, g_pCVar, this, &Menus::OnDispatchConCommand, false);
+	SH_REMOVE_HOOK(IServerGameDLL, GameFrame, g_pSource2Server, SH_MEMBER(this, &Menus::GameFramePre), false);
 	SH_REMOVE_HOOK(IServerGameDLL, GameFrame, g_pSource2Server, SH_MEMBER(this, &Menus::GameFrame), true);
 	SH_REMOVE_HOOK(IGameEventManager2, FireEvent, gameeventmanager, SH_MEMBER(this, &Menus::FireEvent), false);
 	SH_REMOVE_HOOK(IServerGameClients, ClientCommand, g_pSource2GameClients, SH_MEMBER(this, &Menus::ClientCommand), false);
@@ -824,6 +928,10 @@ bool Menus::Hook_ClientConnect( CPlayerSlot slot, const char *pszName, uint64 xu
 void Menus::Hook_ClientPutInServer( CPlayerSlot slot, char const *pszName, int type, uint64 xuid )
 {
 	const int iSlot = slot.Get();
+	CrashTraceLog("event=client-put-in-server slot=%d xuid=%llu type=%d map_generation=%llu player_mask=%016llx",
+		iSlot, static_cast<unsigned long long>(xuid), type,
+		static_cast<unsigned long long>(g_iMapGeneration),
+		static_cast<unsigned long long>(CrashTracePlayerMask()));
 	if(iSlot < 0 || iSlot >= 64 || !m_Players[iSlot]) return;
 	m_Players[iSlot]->SetInGame(true);
 }
@@ -906,8 +1014,39 @@ bool Menus::FireEvent(IGameEvent* pEvent, bool bDontBroadcast)
     RETURN_META_VALUE(MRES_IGNORED, true);
 }
 
+void Menus::GameFramePre(bool simulating, bool bFirstTick, bool bLastTick)
+{
+	if (!g_bCrashTraceArmed)
+		return;
+
+	if (std::chrono::steady_clock::now() >= g_CrashTraceDeadline)
+	{
+		CrashTraceLog("trace=disarmed frames=%llu map_generation=%llu",
+			static_cast<unsigned long long>(g_iCrashTraceFrame),
+			static_cast<unsigned long long>(g_iMapGeneration));
+		g_bCrashTraceArmed = false;
+		return;
+	}
+
+	++g_iCrashTraceFrame;
+	CrashTraceLog("frame=pre id=%llu simulating=%d first=%d last=%d map_generation=%llu player_mask=%016llx globals=%p gamerules=%p entity_system=%p",
+		static_cast<unsigned long long>(g_iCrashTraceFrame), simulating, bFirstTick, bLastTick,
+		static_cast<unsigned long long>(g_iMapGeneration),
+		static_cast<unsigned long long>(CrashTracePlayerMask()), static_cast<void*>(gpGlobals),
+		static_cast<void*>(g_pGameRules), static_cast<void*>(g_pEntitySystem));
+}
+
 void Menus::GameFrame(bool simulating, bool bFirstTick, bool bLastTick)
 {
+	if (g_bCrashTraceArmed)
+	{
+		CrashTraceLog("frame=post-original id=%llu simulating=%d first=%d last=%d map_generation=%llu player_mask=%016llx globals=%p gamerules=%p entity_system=%p",
+			static_cast<unsigned long long>(g_iCrashTraceFrame), simulating, bFirstTick, bLastTick,
+			static_cast<unsigned long long>(g_iMapGeneration),
+			static_cast<unsigned long long>(CrashTracePlayerMask()), static_cast<void*>(gpGlobals),
+			static_cast<void*>(g_pGameRules), static_cast<void*>(g_pEntitySystem));
+	}
+
 	g_bServerSimulating = simulating;
 	if(!simulating) return;
 
@@ -950,6 +1089,15 @@ void Menus::GameFrame(bool simulating, bool bFirstTick, bool bLastTick)
 				timer->m_flLastExecute = g_flUniversalTime;
 			}
 		}
+	}
+
+	if (g_bCrashTraceArmed)
+	{
+		CrashTraceLog("frame=post-utils id=%llu map_generation=%llu player_mask=%016llx gamerules=%p",
+			static_cast<unsigned long long>(g_iCrashTraceFrame),
+			static_cast<unsigned long long>(g_iMapGeneration),
+			static_cast<unsigned long long>(CrashTracePlayerMask()),
+			static_cast<void*>(g_pGameRules));
 	}
 }
 
@@ -1044,6 +1192,9 @@ void Menus::OnDispatchConCommand(ConCommandRef cmdHandle, const CCommandContext&
 void Menus::StartupServer(const GameSessionConfiguration_t& config, ISource2WorldSession*, const char*)
 {
 	++g_iMapGeneration;
+	CrashTraceLog("event=startup-server.begin map_generation=%llu globals=%p gamerules=%p entity_system=%p",
+		static_cast<unsigned long long>(g_iMapGeneration), static_cast<void*>(gpGlobals),
+		static_cast<void*>(g_pGameRules), static_cast<void*>(g_pEntitySystem));
 	g_bServerSimulating = false;
 	for(int i = 0; i < 64; i++)
 	{
@@ -1062,6 +1213,9 @@ void Menus::StartupServer(const GameSessionConfiguration_t& config, ISource2Worl
 
 	char szMapName[256];
 	g_SMAPI->Format(szMapName, sizeof(szMapName), "%s", gpGlobals->mapname);
+	CrashTraceLog("event=startup-server.ready map=%s map_generation=%llu globals=%p gamerules=%p entity_system=%p",
+		szMapName, static_cast<unsigned long long>(g_iMapGeneration), static_cast<void*>(gpGlobals),
+		static_cast<void*>(g_pGameRules), static_cast<void*>(g_pEntitySystem));
 	g_pUtilsApi->SendHookMapStart(szMapName);
 	g_bHasTicked = false;
 	g_pUtilsApi->SendHookStartup();
@@ -1070,6 +1224,9 @@ void Menus::StartupServer(const GameSessionConfiguration_t& config, ISource2Worl
 void Menus::OnClientDisconnect( CPlayerSlot slot, ENetworkDisconnectionReason reason, const char *pszName, uint64 xuid, const char *pszNetworkID )
 {
 	int iSlot = slot.Get();
+	CrashTraceLog("event=client-disconnect slot=%d xuid=%llu reason=%d map_generation=%llu",
+		iSlot, static_cast<unsigned long long>(xuid), static_cast<int>(reason),
+		static_cast<unsigned long long>(g_iMapGeneration));
 	if (iSlot < 0 || iSlot >= 64 || !m_Players[iSlot]) return;
 	g_pMenusCore->ClosePlayerMenu(iSlot);
 	delete m_Players[iSlot];

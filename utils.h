@@ -114,6 +114,7 @@ private:
 
 private: // Hooks
 	void ClientCommand(CPlayerSlot slot, const CCommand &args);
+	void GameFramePre(bool simulating, bool bFirstTick, bool bLastTick);
 	void GameFrame(bool simulating, bool bFirstTick, bool bLastTick);
 	void StartupServer(const GameSessionConfiguration_t& config, ISource2WorldSession*, const char*);
     void OnDispatchConCommand(ConCommandRef cmd, const CCommandContext& ctx, const CCommand& args);
